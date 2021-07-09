@@ -16,6 +16,9 @@ MAX_CHOICES = 10
 MAX_AGE = 30 * 24 * 3600
 DISCOUNT_FACTOR = 0.99
 
+def color_mark(mark):
+    return "\033[38;5;36m{}\033[0;0m".format(mark)
+
 def default_json():
     data = dict()
     data["mark"] = dict()
@@ -41,7 +44,7 @@ def handle_selection(selection, options, data):
         logging.debug("Printing marked directories")
         print("Marked directories: ")
         for key in sorted(data['mark']):
-            print("  {} {}".format(key, data["mark"][key]))
+            print("  {} {}".format(color_mark(key), data["mark"][key]))
     else:
         logging.error("Invalid option: {}".format(selection))
     return None
@@ -71,7 +74,7 @@ def mark_prefix(mark, marks):
     ret = list()
     for key in marks:
         if key.startswith(mark):
-            ret.append("  {} {}".format(key, marks[key]))
+            ret.append("  {} {}".format(color_mark(key), marks[key]))
     return "\n".join(ret)
 
 def print_menu(data):
