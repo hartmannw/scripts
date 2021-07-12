@@ -17,9 +17,11 @@ MAX_AGE = 30 * 24 * 3600
 DISCOUNT_FACTOR = 0.99
 
 def color_mark(mark):
+    """Add color to the mark output."""
     return "\033[38;5;36m{}\033[0;0m".format(mark)
 
 def default_json():
+    """Create a default JSON file to store necessary information."""
     data = dict()
     data["mark"] = dict()
     data["count"] = collections.defaultdict(float)
@@ -28,13 +30,15 @@ def default_json():
     return data
 
 def discount_counts(data):
+    """Multiply all counts by the DISCOUNT_FACTOR."""
     for key in data["count"]:
         data["count"][key] *= DISCOUNT_FACTOR
 
 def handle_selection(selection, options, data):
+    """Process the input, finding the right directory or printing results."""
     if selection in options:
         logging.debug("Selection {} maps to {}".format(selection, options[selection]))
-        return [options[selection]]
+        return options[selection]
     if selection == 'i':
         logging.debug("Printing ignored directories")
         print("Ignored directories:")
@@ -50,12 +54,14 @@ def handle_selection(selection, options, data):
     return None
 
 def is_directory_match(targets, directory):
+    """For each string in target, see if it is a substring of directory."""
     for target in targets:
         if target not in directory:
             return False
     return True
 
 def load_data(filename):
+    """Load the JSON storing our data."""
     data = dict()
     try:
         with open(filename) as fin:
@@ -71,6 +77,7 @@ def load_data(filename):
     return data
 
 def mark_prefix(mark, marks):
+    """Find all marks where mark is a prefix."""
     ret = list()
     for key in marks:
         if key.startswith(mark):
@@ -78,6 +85,10 @@ def mark_prefix(mark, marks):
     return "\n".join(ret)
 
 def print_menu(data):
+    """
+    Print the menu for user selection. Note that we have to print to stderr because we assume
+    a bash script is capturing stdout output.
+    """
     ret = dict()
     print("Most Frequent Directories:", file=sys.stderr)
     idx = 0
@@ -97,6 +108,7 @@ def print_menu(data):
     return ret
 
 def process_directory(directory, data):
+    """Either return a directory or search for a matching directory."""
     sort_type = ""
     logging.debug("Directory is currently set to {}".format(directory))
     if len(directory) == 1:
@@ -114,7 +126,50 @@ def process_directory(directory, data):
     print("Could not find a directory that matches '{}'".format(" ".join(directory[1:])))
     sys.exit(1)
 
+def process_ignore(args, data, current_directory):
+    """Handle ignoring of a directory."""
+    if args.delete:
+        if current_directory in data["ignore"]:
+            data["ignore"].pop(current_directory)
+            logging.debug("Removed directory {} from ignore.".format(current_directory))
+        else:
+            logging.info("Directory '{}' was not being ignored.".format(current_directory))
+    else:
+        data["ignore"][current_directory] = 1
+        data["time"].pop(current_directory, None)
+        data["count"].pop(current_directory, None)
+    return None
+
+def process_mark(args, data, current_directory):
+    """Handle marking of a directory."""
+    if args.delete:
+        if args.mark in data["mark"]:
+            dir = data["mark"].pop(args.mark)
+            logging.debug("Removed mark {} for directory {}".format(args.mark, dir))
+        else:
+            logging.info("Mark {} does not exist.".format(args.mark))
+    else:
+        data["mark"][args.mark] = current_directory
+        logging.debug("Added mark {} for {}".format(args.mark, current_directory))
+    return None
+
+def process_jump(args, data, current_directory):
+    """Handle jumping to a directory."""
+    if args.jump in data["mark"]:
+        logging.debug("Mark {} maps to {}.".format(args.jump, data["mark"][args.jump]))
+        return data["mark"][args.jump]
+    else:
+        logging.error("Mark {} does not exist.". format(args.jump))
+        print("Mark {} does not exist.". format(args.jump))
+        possible_marks = mark_prefix(args.jump, data["mark"])
+        if possible_marks:
+            print("Did you mean one of these marks?")
+            print(possible_marks)
+            print()
+    return None
+
 def remove_old_directories(data):
+    """Remove directories that have not been accessed within the specified time window."""
     now = time.time()
     deletion_set = set()
     for key, val in data["time"].items():
@@ -126,10 +181,9 @@ def remove_old_directories(data):
         del data["count"][key]
 
 def write_data(data, filename):
+    """Write the JSON file back out."""
     json_data = json.dumps(data)
     lumann.utils.file.atomic_write(json_data, filename)
-    #with open(filename, "w") as fout:
-    #    json.dump(data, fout)
 
 def main():
     """Efficient directory navigation."""
@@ -143,6 +197,11 @@ def main():
                               'directories first, and r means search the most recent. The '
                               'remaining arguments are the search terms and they must all be '
                               'matched.'))
+    parser.add_argument('-a', '--add', default=None,
+                        help='Add the given directory to the database.')
+    parser.add_argument('-c', '--current_directory', default=None,
+                        help='Specify the current directory. Useful if you do not want Python to '
+                             'expand symlinks.')
     parser.add_argument('-m', '--mark', default=None,
                         help='Mark the current directory with the given name.')
     parser.add_argument('-d', '--delete', action='store_true',
@@ -162,70 +221,35 @@ def main():
     filename = os.environ["LUMANN_DATA"] + "/navigate.json"
     data = load_data(filename)
     current_directory = os.getcwd()
-    make_jump = False
+    if args.current_directory:
+        current_directory = args.current_directory
+    jump_directory = None
 
     if args.mark:
-        if args.delete:
-            if args.mark in data["mark"]:
-                dir = data["mark"].pop(args.mark)
-                logging.debug("Removed mark {} for directory {}".format(args.mark, dir))
-            else:
-                logging.info("Mark {} does not exist.".format(args.mark))
-        else:
-            data["mark"][args.mark] = current_directory
-            logging.debug("Added mark {} for {}".format(args.mark, current_directory))
+        process_mark(args, data, current_directory)
     elif args.ignore:
-        if args.delete:
-            if current_directory in data["ignore"]:
-                data["ignore"].pop(current_directory)
-                logging.debug("Removed directory {} from ignore.".format(current_directory))
-            else:
-                logging.info("Directory '{}' was not being ignored.".format(current_directory))
-        else:
-            data["ignore"][current_directory] = 1
-            data["time"].pop(current_directory, None)
-            data["count"].pop(current_directory, None)
+        process_ignore(args, data, current_directory)
     elif args.jump:
-        if args.jump in data["mark"]:
-            args.directory = [data["mark"][args.jump]] 
-        else:
-            logging.error("Mark {} does not exist.". format(args.jump))
-            print("Mark {} does not exist.". format(args.jump))
-            possible_marks = mark_prefix(args.jump, data["mark"])
-            if possible_marks:
-                print("Did you mean one of these marks?")
-                print(possible_marks)
-                print()
+        jump_directory = process_jump(args, data, current_directory)
+    elif args.add and args.add not in data["ignore"]:
+        data["count"][args.add] += 1
+        logging.debug("Increasing count for '{}' to {}".format(args.add, data["count"][args.add]))
+        data["time"][args.add] = time.time()
+        discount_counts(data)
+        remove_old_directories(data)
     elif not args.directory:
         options = print_menu(data)
         selection = input()
         selection = handle_selection(selection, options, data)
         if selection:
-            args.directory = selection
-    if args.directory:
-        args.directory = process_directory(args.directory, data)
-        make_jump = True # Even if we can't get there with Python, let bash handle the error.
-        valid = False
-        try:
-            os.chdir(args.directory)
-            logging.debug("We can move to {}".format(args.directory))
-            current_directory = os.getcwd()
-            valid = True
-        except FileNotFoundError:
-            logging.debug("{} does not appear to be a valid directory".format(args.directory))
-        if valid:
-            logging.debug("{} maps to {}".format(args.directory, current_directory))
-            if current_directory not in data["ignore"]:
-                data["count"][current_directory] += 1
-                logging.debug("Increasing count for '{}' to {}".format(current_directory, data["count"][current_directory]))
-                data["time"][current_directory] = time.time()
-                discount_counts(data)
-                remove_old_directories(data)
+            jump_directory = selection
+    else:
+        jump_directory = process_directory(args.directory, data)
 
     write_data(data, filename)
 
-    if make_jump:
-        print(args.directory)
+    if jump_directory:
+        print(jump_directory)
     else:
         sys.exit(1)
 
